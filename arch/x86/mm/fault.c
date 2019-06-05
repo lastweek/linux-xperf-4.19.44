@@ -1450,7 +1450,7 @@ trace_page_fault_entries(unsigned long address, struct pt_regs *regs,
 		trace_page_fault_kernel(address, regs, error_code);
 }
 
-#define USER_KERNEL_CROSSING_PERF_MAGINC	0x19940619
+#define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
 
 /*
  * User stack:
@@ -1470,7 +1470,7 @@ static inline void user_kernel_crossing_perf(struct pt_regs *regs)
 	user_tsc   = *(unsigned long *)(user_sp + 8);
 	kernel_tsc = *(unsigned long *)(user_sp);
 
-	if (magic == USER_KERNEL_CROSSING_PERF_MAGINC) {
+	if (magic == USER_KERNEL_CROSSING_PERF_MAGIC) {
 		trace_printk("sp: %#lx user_tsc: %ld, kernel_tsc:%ld, latency: %ld\n",
 			user_sp, user_tsc, kernel_tsc, kernel_tsc - user_tsc);
 	} else {
