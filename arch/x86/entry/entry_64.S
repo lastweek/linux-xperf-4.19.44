@@ -1711,6 +1711,25 @@ ENTRY(\sym)
 	pushq	$-1				/* ORIG_RAX: no syscall to restart */
 	.endif
 
+	/*
+	 * HACK:
+	 * - Stack was switched
+	 * - Current kernel %rsp points to pt_regs->orig_ax
+	 * - Previous user %rsp was saved at pt_regs->sp, which is 32(%rsp)
+	 * - RDTSC save counter into EDX:EAX
+	 * - Save tsc into user stack
+	 */
+	testb	$3, CS-ORIG_RAX(%rsp)	# Only track pgfault from userspace
+	jz	1f
+
+	#movq	%rax, %r15
+	#movq	%rdx, %r14
+	rdtsc
+	movq	32(%rsp), %r15		# Get the user %rsp
+	movl	%edx, 4(%r15)		# The higher portion
+	movl	%eax, (%r15)		# Thw lower portion
+
+1:
 	.if \paranoid == 1
 	testb	$3, CS-ORIG_RAX(%rsp)		/* If coming from userspace, switch stacks */
 	jnz	.Lfrom_usermode_switch_stack_\@
