@@ -1162,7 +1162,6 @@ idtentry xenint3		do_int3			has_error_code=0
 #endif
 
 idtentry general_protection	do_general_protection	has_error_code=1
-idtentry page_fault		do_page_fault		has_error_code=1
 
 #ifdef CONFIG_KVM_GUEST
 idtentry async_page_fault	do_async_page_fault	has_error_code=1
@@ -1696,3 +1695,93 @@ ENTRY(rewind_stack_do_exit)
 
 	call	do_exit
 END(rewind_stack_do_exit)
+
+.macro idtentry_perf sym do_sym has_error_code:req paranoid=0 shift_ist=-1
+ENTRY(\sym)
+	UNWIND_HINT_IRET_REGS offset=\has_error_code*8
+
+	/* Sanity check */
+	.if \shift_ist != -1 && \paranoid == 0
+	.error "using shift_ist requires paranoid=1"
+	.endif
+
+	ASM_CLAC
+
+	.if \has_error_code == 0
+	pushq	$-1				/* ORIG_RAX: no syscall to restart */
+	.endif
+
+	.if \paranoid == 1
+	testb	$3, CS-ORIG_RAX(%rsp)		/* If coming from userspace, switch stacks */
+	jnz	.Lfrom_usermode_switch_stack_\@
+	.endif
+
+	.if \paranoid
+	call	paranoid_entry
+	.else
+	call	error_entry
+	.endif
+	UNWIND_HINT_REGS
+	/* returned flag: ebx=0: need swapgs on exit, ebx=1: don't need it */
+
+	.if \paranoid
+	.if \shift_ist != -1
+	TRACE_IRQS_OFF_DEBUG			/* reload IDT in case of recursion */
+	.else
+	TRACE_IRQS_OFF
+	.endif
+	.endif
+
+	movq	%rsp, %rdi			/* pt_regs pointer */
+
+	.if \has_error_code
+	movq	ORIG_RAX(%rsp), %rsi		/* get error code */
+	movq	$-1, ORIG_RAX(%rsp)		/* no syscall to restart */
+	.else
+	xorl	%esi, %esi			/* no error code */
+	.endif
+
+	.if \shift_ist != -1
+	subq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
+	.endif
+
+	call	\do_sym
+
+	.if \shift_ist != -1
+	addq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
+	.endif
+
+	/* these procedures expect "no swapgs" flag in ebx */
+	.if \paranoid
+	jmp	paranoid_exit
+	.else
+	jmp	error_exit
+	.endif
+
+	.if \paranoid == 1
+	/*
+	 * Entry from userspace.  Switch stacks and treat it
+	 * as a normal entry.  This means that paranoid handlers
+	 * run in real process context if user_mode(regs).
+	 */
+.Lfrom_usermode_switch_stack_\@:
+	call	error_entry
+
+	movq	%rsp, %rdi			/* pt_regs pointer */
+
+	.if \has_error_code
+	movq	ORIG_RAX(%rsp), %rsi		/* get error code */
+	movq	$-1, ORIG_RAX(%rsp)		/* no syscall to restart */
+	.else
+	xorl	%esi, %esi			/* no error code */
+	.endif
+
+	call	\do_sym
+
+	jmp	error_exit
+	.endif
+_ASM_NOKPROBE(\sym)
+END(\sym)
+.endm
+
+idtentry_perf page_fault		do_page_fault		has_error_code=1
