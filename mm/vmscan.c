@@ -3317,6 +3317,9 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 
 	trace_mm_vmscan_memcg_reclaim_end(nr_reclaimed);
 
+	trace_printk("nr_pages: %lu, may_swap: %d, nr_to_reclaim: %lu, nr_reclaimed: %lu\n",
+		nr_pages, may_swap, sc.nr_to_reclaim, nr_reclaimed);
+
 	return nr_reclaimed;
 }
 #endif
