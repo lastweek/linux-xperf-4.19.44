@@ -1202,6 +1202,36 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
 	return true;
 }
 
+#define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
+
+static unsigned long nr_xperf;
+
+/*
+ * User stack:
+ *
+ *   | ..            |
+ *   | 8B magic      |
+ *   | 8B user tsc   |
+ *   | 8B kernel tsc | <-- user_sp
+ */ 
+static inline void user_kernel_crossing_perf(struct pt_regs *regs)
+{
+	unsigned long magic, user_tsc, kernel_tsc, user_sp;
+
+	user_sp = regs->sp;
+
+	magic      = *(unsigned long *)(user_sp + 16);
+	user_tsc   = *(unsigned long *)(user_sp + 8);
+	kernel_tsc = *(unsigned long *)(user_sp);
+
+	if (magic == USER_KERNEL_CROSSING_PERF_MAGIC) {
+		trace_printk("idx-%5ld user_sp: %#lx u:%ld k:%ld cur:%lld latency: %ld r15:%#lx",
+			nr_xperf, user_sp, user_tsc, kernel_tsc, rdtsc(), kernel_tsc - user_tsc,
+			regs->r15);
+		nr_xperf++;
+	}
+}
+
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -1217,6 +1247,10 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	vm_fault_t fault, major = 0;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
 	u32 pkey;
+
+	/* Only track pgfault from userspace */
+	if (user_mode(regs))
+		user_kernel_crossing_perf(regs);
 
 	tsk = current;
 	mm = tsk->mm;
@@ -1450,35 +1484,6 @@ trace_page_fault_entries(unsigned long address, struct pt_regs *regs,
 		trace_page_fault_kernel(address, regs, error_code);
 }
 
-#define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
-
-/*
- * User stack:
- *
- *   | ..            |
- *   | 8B magic      |
- *   | 8B user tsc   |
- *   | 8B kernel tsc | <-- user_sp
- */ 
-static inline void user_kernel_crossing_perf(struct pt_regs *regs)
-{
-	unsigned long magic, user_tsc, kernel_tsc, user_sp;
-
-	user_sp = regs->sp;
-
-	magic      = *(unsigned long *)(user_sp + 16);
-	user_tsc   = *(unsigned long *)(user_sp + 8);
-	kernel_tsc = *(unsigned long *)(user_sp);
-
-	if (magic == USER_KERNEL_CROSSING_PERF_MAGIC) {
-		trace_printk("sp: %#lx user_tsc: %ld, kernel_tsc:%ld, latency: %ld\n",
-			user_sp, user_tsc, kernel_tsc, kernel_tsc - user_tsc);
-	} else {
-		trace_printk("sp: %#lx Mismatched magic: %lx\n, skip.",
-			user_sp, magic);
-	}
-}
-
 /*
  * We must have this function blacklisted from kprobes, tagged with notrace
  * and call read_cr2() before calling anything else. To avoid calling any
@@ -1495,10 +1500,6 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	prev_state = exception_enter();
 	if (trace_pagefault_enabled())
 		trace_page_fault_entries(address, regs, error_code);
-
-	/* Only track pgfault from userspace */
-	if (user_mode(regs))
-		user_kernel_crossing_perf(regs);
 
 	__do_page_fault(regs, error_code, address);
 	exception_exit(prev_state);

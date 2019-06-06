@@ -107,15 +107,16 @@ static int run(void)
 	for (i = 0; i < NR_PAGES; i++) {
 		int *bar, cut;
 
+		bar = foo + PAGE_SIZE * i;
+
+		/* kernel_tsc slot  */
+		*(unsigned long *)(sp) = 666;
+
+		/* user_tsc slot */
 		*(unsigned long *)(sp + 8) = rdtsc();
 		asm volatile("": : :"memory");
 
-		bar = foo + PAGE_SIZE * i;
 		*bar = 100;
-
-		printf("%d %ld %ld\n", i,
-			*(unsigned long *)(sp + 8),
-			rdtsc());
 	}
 	return 0;
 }
@@ -124,7 +125,7 @@ int main(void)
 {
 	int i, cpu, node;
 
-	pin_cpu(23);
+	pin_cpu(7);
 	getcpu(&cpu, &node);
 	printf("cpu: %d, node: %d\n", cpu, node);
 

@@ -1163,10 +1163,6 @@ idtentry xenint3		do_int3			has_error_code=0
 
 idtentry general_protection	do_general_protection	has_error_code=1
 
-#ifdef CONFIG_KVM_GUEST
-idtentry async_page_fault	do_async_page_fault	has_error_code=1
-#endif
-
 #ifdef CONFIG_X86_MCE
 idtentry machine_check		do_mce			has_error_code=0	paranoid=1
 #endif
@@ -1719,17 +1715,23 @@ ENTRY(\sym)
 	 * - RDTSC save counter into EDX:EAX
 	 * - Save tsc into user stack
 	 */
-	testb	$3, CS-ORIG_RAX(%rsp)	# Only track pgfault from userspace
-	jz	1f
 
-	#movq	%rax, %r15
-	#movq	%rdx, %r14
+	# Save rax/rdx to kernel stack
+	movq	%rax, -8(%rsp)
+	movq	%rdx, -16(%rsp)
+
 	rdtsc
-	movq	32(%rsp), %r15		# Get the user %rsp
-	movl	%edx, 4(%r15)		# The higher portion
-	movl	%eax, (%r15)		# Thw lower portion
 
-1:
+	# Save tsc to user stack
+	movq	RSP-ORIG_RAX(%rsp), %r15	# Get the user %rsp
+	#movq	$123, (%r15)			# Get the user %rsp
+	movl	%edx, 4(%r15)			# The higher portion
+	movl	%eax, (%r15)			# The lower portion
+
+	# Restore rax/rdx from kernel stack
+	movq	-8(%rsp), %rax
+	movq	-16(%rsp), %rdx
+
 	.if \paranoid == 1
 	testb	$3, CS-ORIG_RAX(%rsp)		/* If coming from userspace, switch stacks */
 	jnz	.Lfrom_usermode_switch_stack_\@
@@ -1803,4 +1805,15 @@ _ASM_NOKPROBE(\sym)
 END(\sym)
 .endm
 
-idtentry_perf page_fault		do_page_fault		has_error_code=1
+/*
+ * This is used on bare-metal host linux.
+ */
+idtentry_perf	page_fault		do_page_fault		has_error_code=1
+
+/*
+ * This is used on a linux VM
+ * For example, a QEMU hosted VM.
+ */
+#ifdef CONFIG_KVM_GUEST
+idtentry_perf	async_page_fault	do_async_page_fault	has_error_code=1
+#endif
