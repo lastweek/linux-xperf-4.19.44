@@ -1,13 +1,13 @@
 # Crossing Performance (xperf)
 
-Contact: Yizhou Shan <ys@purdue.edu>
+Author: Yizhou Shan <ys@purdue.edu>
 
 ## Purpose
 
 We try to measure the user/kernel space crossing overhead.
 By crossing, we meant the pure crossing overhead excluding all general
 kernel assembly glue code.
-In this repo, we use page fault exception as our wheel to get that.
+In this repo, we use x86 page fault exception as our wheel to get that.
 
 ## Mechanism
 
@@ -41,9 +41,9 @@ The approach:
 
 ## Files changed
 
-- arch/x86/entry/entry_64.S: assembly TSC code
-- arch/x86/mm/fault.c: print
-- xperf/xperf.c: userspace test code
+- `arch/x86/entry/entry_64.S`: assembly TSC code
+- `arch/x86/mm/fault.c`: print
+- `xperf/xperf.c`: userspace test code
 
 ## HOWTO Run
 
