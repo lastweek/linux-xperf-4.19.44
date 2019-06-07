@@ -94,5 +94,5 @@ CPU: Xeon E5-v3, @2.4GHz
 
 |Type| U2K Cycles| K2U Cycles|
 |---| ---|---|
-| VM| ~800| TODO|
-|Bare-metal| ~500| TODO|
+| VM| ~800| ~500|
+|Bare-metal| ~500| ~290|
