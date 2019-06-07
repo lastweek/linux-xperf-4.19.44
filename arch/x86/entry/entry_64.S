@@ -702,11 +702,11 @@ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
 xperf_return_kernel_tsc:
 	/*
 	 * User stack:
-	 *
-	 *   | ..            |
-	 *   | 8B magic      | +16
-	 *   | 8B user tsc   | +8
-	 *   | 8B reserved   | <-- user rsp
+	 *   | ..       |
+	 *   | 8B magic | (filled by user)   +24
+	 *   | 8B u2k_u | (filled by user)   +16
+	 *   | 8B u2k_k | (filled by kernel) +8
+	 *   | 8B k2u_k | (filled by kernel) <-- %rsp
 	 * 
 	 * Kernel Stack frame after saving:
 	 *	SS	+56
@@ -725,15 +725,17 @@ xperf_return_kernel_tsc:
 	# %rcx points to user RSP
 	movq	48(%rsp), %rcx
 
-	cmpq	$USER_KERNEL_CROSSING_PERF_MAGIC, 16(%rcx)
+	cmpq	$USER_KERNEL_CROSSING_PERF_MAGIC, 24(%rcx)
 	jne	1f
 
+	# k2u_k
 	mfence
 	rdtsc
+
 	shl	$32, %rdx
 	or	%rdx, %rax
 
-	# Save to user stack
+	# Save to k2u_k of user stack
 	movq	%rax, (%rcx)
 1:
 	popq	%rcx
@@ -1777,7 +1779,11 @@ ENTRY(\sym)
 
 	movq	%rax, -8(%rsp)
 	movq	%rdx, -16(%rsp)
+
+	# u2k_k
 	rdtsc
+	mfence
+
 	shl	$32, %rdx
 	or	%rdx, %rax
 

@@ -9,4 +9,4 @@ clean:
 	rm -f *.o
 
 %.o: %.c
-	gcc -g -o $@ $< -lm -pthread
+	gcc -O1 -g -o $@ $< -lm -pthread

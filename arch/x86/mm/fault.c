@@ -1212,15 +1212,18 @@ __visible DEFINE_PER_CPU(unsigned long, xperf_kernel_tsc);
 
 /*
  * User stack:
- *   | ..            |
- *   | 8B magic      |
- *   | 8B user tsc   |
- *   | 8B reserved   | <-- user_sp
+ *
+ *   | ..       |
+ *   | 8B magic | (filled by user)   +24
+ *   | 8B u2k_u | (filled by user)   +16
+ *   | 8B u2k_k | (filled by kernel) +8
+ *   | 8B k2u_k | (filled by kernel) <-- sp
  */ 
 static noinline void
 xperf_profile(struct pt_regs *regs)
 {
-	unsigned long magic, user_tsc, kernel_tsc, user_sp;
+	unsigned long magic, u2k_k , user_sp;
+	void *u2k_k_p, *magic_p;
 
 	/*
 	 * We must measure xperf in a kernel without KPTI.
@@ -1231,24 +1234,21 @@ xperf_profile(struct pt_regs *regs)
 
 	user_sp = regs->sp;
 
+	magic_p = (void *)(user_sp + 24);
+	u2k_k_p = (void *)(user_sp + 8);
+
 	/*
 	 * Though mostly the stack page should have been established already,
 	 * use copy_from_user() instead of raw dereference for safety.
 	 */
-	if (copy_from_user(&magic, (void *)(user_sp + 16), sizeof(unsigned long)))
-		return;
-	if (copy_from_user(&user_tsc, (void *)(user_sp + 8), sizeof(unsigned long)))
+	if (copy_from_user(&magic, magic_p, sizeof(unsigned long)))
 		return;
 
 	if (unlikely(magic == USER_KERNEL_CROSSING_PERF_MAGIC)) {
-		kernel_tsc = this_cpu_read(xperf_kernel_tsc);
+		u2k_k = this_cpu_read(xperf_kernel_tsc);
 
-		/*
-		 * Don't use trace_printk. Somehow enabling it
-		 * introduce a lot extra overheads.
-		 */
-		pr_crit("[xperf u2k] u_tsc:%lu k_tsc:%lu u2k_latency: %lu\n",
-			user_tsc, kernel_tsc, kernel_tsc - user_tsc);
+		if (copy_to_user(u2k_k_p, &u2k_k, sizeof(unsigned long)))
+			return;
 	}
 }
 

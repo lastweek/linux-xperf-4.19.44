@@ -16,7 +16,7 @@ In this repo, we use x86 page fault exception as our wheel to get that.
 At a high-level, the flow is:
   - User save TSC into stack
   - User pgfault
-  - Cross to kernel, get TSC, and calculate latency
+  - Cross to kernel, get TSC, and save to user stack
 
 But devil is in the details, especially this low-level assembly code.
 There are several difficulties:
@@ -35,7 +35,7 @@ The approach:
 	  if the exceptions came from user space.
   - `entry_64.S`: Save TSC into a per-cpu area. With swapgs surrounded.
   - `entry_64.S`: Restore rax/rdx
-  - `fault.c`: calculate latency, print if MAGIC match
+  - `fault.c`: use `copy_to_user` to save `u2k_k` in user stack.
 
 Enable/Disable: change `xperf_idtentry` back to `idtentry` for both `page_fault` and `async_page_fault`.
 
@@ -63,6 +63,65 @@ Note: k2u hack is NOT safe because we probe user virtual address directly in ass
 i.e., `movq    %rax, (%rcx)` in our hack. During my experiments, sometimes it will crash,
 but not always.
 
+### TSC Ordering
+
+TSC will be reodered if no actions are taken.
+We use `mfence` to mimize errors.
+```
+/*
+ * User to Kernel 
+ *
+ *          mfence
+ *          rdtsc	<- u2k_u
+ * (user)
+ * -------  pgfault  --------
+ * (kernel)
+ *          rdtsc	<- u2k_k
+ *          mfence
+ */
+
+/*
+ * Kernel to User
+ *
+ *          mfence
+ *          rdtsc	<- k2u_k
+ * (kernel)
+ * -------  IRET --------
+ * (user)
+ *          rdtsc	<- k2u_k
+ *          mfence
+ */
+```
+
+### xperf/xperf.c
+
+This user program will report both u2k and k2u crossing numbers.
+After compilation, use `objdump xperf.o -d` to check assembly,
+make sure the assembly complies with the above sequence.
+Something like this:
+```
+  mfence 
+  rdtsc  				<- u2k_u
+
+  shl    $0x20,%rdx
+  or     %rdx,%rax
+  mov    %rax,(%rdi)			<- save to user stack
+
+  movl   $0x12345678,(%rsi)		<- pgfault
+
+  rdtsc  				<- k2u_u
+  mfence 
+```
+
+The user stack layout upon pgfault is:
+```
+  | ..       |
+  | 8B magic | (filled by user)   +24
+  | 8B u2k_u | (filled by user)   +16
+  | 8B u2k_k | (filled by kernel) +8
+  | 8B k2u_k | (filled by kernel) <-- %rsp
+```
+
 ## Misc
 
 - For VM scenario, the page fault entry point is `async_page_fault`, not the `page_fault`.
@@ -79,14 +138,17 @@ FAT NOTE:
 - Enabling k2u code might bring crash
 - It's not safe to disable KPTI
 - Switch back to normal kernel after testing
+- Make sure if you have a way to reboot your machine!
 
 Steps:
 - Copy your current kernel's .config into this repo
 - make oldconfig
 - Disable `CONFIG_PAGE_TABLE_ISOLATION`
-- Compile kernel and install, reboot
-- Run `xperf/xperf.c` for k2u cycles
-- Check dmesg for u2k cycles
+- Compile kernel and install.
+- Reboot into new kernel
+- Disable hugepage
+  - `echo never > /sys/kernel/mm/transparent_hugepage/enabled`
+- Run `xperf/xperf.c`, you will get a report.
 
 ## Numbers
 
@@ -94,5 +156,5 @@ CPU: Xeon E5-v3, @2.4GHz
 
 |Type| U2K Cycles| K2U Cycles|
 |---| ---|---|
-| VM| ~800| ~500|
+| VM| ~600 | ~370 |
 |Bare-metal| ~500| ~290|
