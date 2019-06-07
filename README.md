@@ -9,6 +9,10 @@ By crossing, we meant the pure crossing overhead excluding all general
 kernel assembly glue code.
 In this repo, we use x86 page fault exception as our wheel to get that.
 
+But do note, the numbers reported by this repo slightly larger than the
+real crossing overhead because some instructions are needed in between
+to do bookkeeping. Check below for details.
+
 ## Mechanism
 
 ### Files changed
@@ -73,10 +77,38 @@ Note: k2u hack is __NOT SAFE__ because we probe user virtual address directly in
 i.e., `movq    %rax, (%rcx)` in our hack. During my experiments, sometimes it will crash,
 but not always.
 
-### TSC Ordering
+### xperf/xperf.c
 
-TSC will be reodered if no actions are taken.
-We use `mfence` to mimize errors.
+This user program will report both u2k and k2u crossing numbers.
+After compilation, use `objdump xperf.o -d` to check assembly,
+```
+  mfence 
+  rdtsc  				<- u2k_u
+
+  shl    $0x20,%rdx
+  or     %rdx,%rax
+  mov    %rax,(%rdi)			<- save to user stack
+
+  movl   $0x12345678,(%rsi)		<- pgfault
+
+  rdtsc  				<- k2u_u
+  mfence 
+```
+
+The user stack layout upon pgfault is:
+```
+  | ..       |
+  | 8B magic | (filled by user)   +24
+  | 8B u2k_u | (filled by user)   +16
+  | 8B u2k_k | (filled by kernel) +8
+  | 8B k2u_k | (filled by kernel) <-- %rsp
+```
+
+### TSC Measurement
+
+TSC will be reodered if no actions are taken. We use `mfence` to mimize runtime errors.
+
+Ideally, we want a test sequence like this:
 ```
 /*
  * User to Kernel 
@@ -103,33 +135,51 @@ We use `mfence` to mimize errors.
  */
 ```
 
-### xperf/xperf.c
+But we need some instructions in between to do essential setup.
+So the real instruction flow is:
 
-This user program will report both u2k and k2u crossing numbers.
-After compilation, use `objdump xperf.o -d` to check assembly,
-make sure the assembly complies with the above sequence.
-Something like this:
+U2K
 ```
-  mfence 
-  rdtsc  				<- u2k_u
+(User)
+	mfence 
+	rdtsc  					<- u2k_u
 
-  shl    $0x20,%rdx
-  or     %rdx,%rax
-  mov    %rax,(%rdi)			<- save to user stack
+	shl    $0x20,%rdx
+	or     %rdx,%rax
+	mov    %rax,(%rdi)
 
-  movl   $0x12345678,(%rsi)		<- pgfault
+	movl   $0x12345678,(%rsi)
+       --------------------------------         Crossing
+(Kernel)
+	testb	$3, CS-ORIG_RAX(%rsp)
+	jz	1f
 
-  rdtsc  				<- k2u_u
-  mfence 
+	movq	%rax, -8(%rsp)
+	movq	%rdx, -16(%rsp)
+
+	rdtsc					<- u2k_k
+	mfence
 ```
 
-The user stack layout upon pgfault is:
+K2U
 ```
-  | ..       |
-  | 8B magic | (filled by user)   +24
-  | 8B u2k_u | (filled by user)   +16
-  | 8B u2k_k | (filled by kernel) +8
-  | 8B k2u_k | (filled by kernel) <-- %rsp
+(Kernel)
+	mfence
+	rdtsc					<- k2u_k
+
+	shl	$32, %rdx
+	or	%rdx, %rax
+
+	movq	%rax, (%rcx)
+	popq	%rcx
+	popq	%rdx
+	popq	%rax
+
+	INTERRUPT_RETURN
+       --------------------------------         Crossing
+(User)
+	rdtsc					<- k2u_u
+	mfence
 ```
 
 ## Misc
