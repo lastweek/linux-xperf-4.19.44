@@ -39,6 +39,21 @@ The approach:
 
 - For VM scenario, the page fault entry point is `async_page_fault`, not the `page_fault`.
 
+## Files changed
+
+- arch/x86/entry/entry_64.S: assembly TSC code
+- arch/x86/mm/fault.c: print
+- xperf/xperf.c: userspace test code
+
+## HOWTO Run
+
+- Copy your current kernel's .config into this repo
+- make oldconfig
+- Disable `CONFIG_PAGE_TABLE_ISOLATION`
+- Compile kernel and install, reboot
+- Run `xperf/xperf.c`
+- Check dmesg
+
 ## Some Numbers
 
 CPU: Xeon E5-v3, @2.4GHz
