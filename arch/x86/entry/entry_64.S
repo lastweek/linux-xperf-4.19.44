@@ -698,6 +698,7 @@ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
 	popq	%rdi
 	SWAPGS
 
+# Begin xperf k2u
 xperf_return_kernel_tsc:
 	/*
 	 * User stack:
@@ -738,6 +739,7 @@ xperf_return_kernel_tsc:
 	popq	%rcx
 	popq	%rdx
 	popq	%rax
+# End xperf k2u
 
 	INTERRUPT_RETURN
 
@@ -1741,7 +1743,7 @@ END(rewind_stack_do_exit)
  * This is a copy of the original idtentry.
  * The difference is we added some code to record TSC.
  */
-.macro idtentry_perf sym do_sym has_error_code:req paranoid=0 shift_ist=-1
+.macro xperf_idtentry sym do_sym has_error_code:req paranoid=0 shift_ist=-1
 ENTRY(\sym)
 	UNWIND_HINT_IRET_REGS offset=\has_error_code*8
 
@@ -1864,12 +1866,12 @@ END(\sym)
 /*
  * This is used on bare-metal host linux.
  */
-idtentry_perf	page_fault		do_page_fault		has_error_code=1
+xperf_idtentry	page_fault		do_page_fault		has_error_code=1
 
 /*
  * This is used on a linux VM
  * For example, a QEMU hosted VM.
  */
 #ifdef CONFIG_KVM_GUEST
-idtentry_perf	async_page_fault	do_async_page_fault	has_error_code=1
+xperf_idtentry	async_page_fault	do_async_page_fault	has_error_code=1
 #endif
