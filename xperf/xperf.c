@@ -127,7 +127,7 @@ int main(void)
 {
 	int i, cpu, node;
 
-	pin_cpu(7);
+	pin_cpu(23);
 	getcpu(&cpu, &node);
 	printf("cpu: %d, node: %d\n", cpu, node);
 

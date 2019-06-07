@@ -1224,6 +1224,11 @@ xperf_profile(struct pt_regs *regs)
 {
 	unsigned long magic, user_tsc, kernel_tsc, user_sp;
 
+	/*
+	 * We must measure xperf in a kernel without KPTI.
+	 * Because we are trying to access kernel virtual address
+	 * before the CR3 switch at entry_64.S
+	 */
 	BUILD_BUG_ON(IS_ENABLED(CONFIG_PAGE_TABLE_ISOLATION));
 
 	user_sp = regs->sp;
@@ -1240,7 +1245,11 @@ xperf_profile(struct pt_regs *regs)
 	if (unlikely(magic == USER_KERNEL_CROSSING_PERF_MAGIC)) {
 		kernel_tsc = this_cpu_read(xperf_kernel_tsc);
 
-		trace_printk("idx-%5ld rsp:%#lx u_tsc:%ld k_tsc:%ld cur:%lld Latency: %ld\n",
+		/*
+		 * Don't use trace_printk. Somehow enabling it
+		 * introduce a lot extra overheads.
+		 */
+		pr_crit("idx-%5ld rsp:%#lx u_tsc:%ld k_tsc:%ld cur:%lld Latency: %ld\n",
 			nr_xperf, user_sp, user_tsc, kernel_tsc, rdtsc(), kernel_tsc - user_tsc);
 		nr_xperf++;
 	}
