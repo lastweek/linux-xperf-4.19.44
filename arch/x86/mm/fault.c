@@ -1207,27 +1207,41 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
 static unsigned long nr_xperf;
 
 /*
+ * Used to save the TSC right after user/kernel context switch.
+ * This is filled by assembly code.
+ */
+__visible DEFINE_PER_CPU(unsigned long, xperf_kernel_tsc);
+
+/*
  * User stack:
- *
  *   | ..            |
  *   | 8B magic      |
  *   | 8B user tsc   |
- *   | 8B kernel tsc | <-- user_sp
+ *   | 8B reserved   | <-- user_sp
  */ 
-static inline void user_kernel_crossing_perf(struct pt_regs *regs)
+static noinline void
+xperf_profile(struct pt_regs *regs)
 {
 	unsigned long magic, user_tsc, kernel_tsc, user_sp;
 
+	BUILD_BUG_ON(IS_ENABLED(CONFIG_PAGE_TABLE_ISOLATION));
+
 	user_sp = regs->sp;
 
-	magic      = *(unsigned long *)(user_sp + 16);
-	user_tsc   = *(unsigned long *)(user_sp + 8);
-	kernel_tsc = *(unsigned long *)(user_sp);
+	/*
+	 * Though mostly the stack page should have been established already,
+	 * use copy_from_user() instead of raw dereference for safety.
+	 */
+	if (copy_from_user(&magic, (void *)(user_sp + 16), sizeof(unsigned long)))
+		return;
+	if (copy_from_user(&user_tsc, (void *)(user_sp + 8), sizeof(unsigned long)))
+		return;
 
-	if (magic == USER_KERNEL_CROSSING_PERF_MAGIC) {
-		trace_printk("idx-%5ld user_sp: %#lx u:%ld k:%ld cur:%lld latency: %ld r15:%#lx",
-			nr_xperf, user_sp, user_tsc, kernel_tsc, rdtsc(), kernel_tsc - user_tsc,
-			regs->r15);
+	if (unlikely(magic == USER_KERNEL_CROSSING_PERF_MAGIC)) {
+		kernel_tsc = this_cpu_read(xperf_kernel_tsc);
+
+		trace_printk("idx-%5ld rsp:%#lx u_tsc:%ld k_tsc:%ld cur:%lld Latency: %ld\n",
+			nr_xperf, user_sp, user_tsc, kernel_tsc, rdtsc(), kernel_tsc - user_tsc);
 		nr_xperf++;
 	}
 }
@@ -1248,9 +1262,11 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
 	u32 pkey;
 
+#if 1
 	/* Only track pgfault from userspace */
 	if (user_mode(regs))
-		user_kernel_crossing_perf(regs);
+		xperf_profile(regs);
+#endif
 
 	tsk = current;
 	mm = tsk->mm;

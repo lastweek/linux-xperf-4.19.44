@@ -99,18 +99,20 @@ static int run(void)
 	 *   | ..            |
 	 *   | 8B magic      |
 	 *   | 8B user tsc   |
-	 *   | 8B kernel tsc | <-- sp
+	 *   | 8B reserved   | <-- sp
 	 */ 
+
+	/* Magic slot */
 	*(unsigned long *)(sp + 16) = USER_KERNEL_CROSSING_PERF_MAGIC;
+
+	/* reserved slot  */
+	*(unsigned long *)(sp) = 666;
 
 	gettimeofday(&ts, NULL);
 	for (i = 0; i < NR_PAGES; i++) {
 		int *bar, cut;
 
 		bar = foo + PAGE_SIZE * i;
-
-		/* kernel_tsc slot  */
-		*(unsigned long *)(sp) = 666;
 
 		/* user_tsc slot */
 		*(unsigned long *)(sp + 8) = rdtsc();

@@ -1692,6 +1692,11 @@ ENTRY(rewind_stack_do_exit)
 	call	do_exit
 END(rewind_stack_do_exit)
 
+/*
+ * xperf HACK:
+ * This is a copy of the original idtentry.
+ * The difference is we added some code to record TSC.
+ */
 .macro idtentry_perf sym do_sym has_error_code:req paranoid=0 shift_ist=-1
 ENTRY(\sym)
 	UNWIND_HINT_IRET_REGS offset=\has_error_code*8
@@ -1708,30 +1713,37 @@ ENTRY(\sym)
 	.endif
 
 	/*
-	 * HACK:
-	 * - Stack was switched
+	 * xperf HACK:
+	 * - Disable KPTI!
+	 * - Stack was switched from user to kernel
 	 * - Current kernel %rsp points to pt_regs->orig_ax
 	 * - Previous user %rsp was saved at pt_regs->sp, which is 32(%rsp)
 	 * - RDTSC save counter into EDX:EAX
-	 * - Save tsc into user stack
+	 * - -8(%rsp) and -16(%rsp) are safe if we came from userspace,
+	 *   because the kernel stack start from beginning after switch,
+	 *   and kernel stack is usually 8K.
+	 * - Upon enter, %gs was not switched. To use per-cpu temporary,
+	 *   we need to do swapgs twice if we don't want to change other code.
 	 */
 
-	# Save rax/rdx to kernel stack
+	testb	$3, CS-ORIG_RAX(%rsp)
+	jz	1f
+
 	movq	%rax, -8(%rsp)
 	movq	%rdx, -16(%rsp)
-
 	rdtsc
+	shl	$32, %rdx
+	or	%rdx, %rax
 
-	# Save tsc to user stack
-	movq	RSP-ORIG_RAX(%rsp), %r15	# Get the user %rsp
-	#movq	$123, (%r15)			# Get the user %rsp
-	movl	%edx, 4(%r15)			# The higher portion
-	movl	%eax, (%r15)			# The lower portion
+	SWAPGS
+	movq	%rax, PER_CPU_VAR(xperf_kernel_tsc)
+	SWAPGS
 
-	# Restore rax/rdx from kernel stack
+	# Restore rax/rdx
 	movq	-8(%rsp), %rax
 	movq	-16(%rsp), %rdx
 
+1:
 	.if \paranoid == 1
 	testb	$3, CS-ORIG_RAX(%rsp)		/* If coming from userspace, switch stacks */
 	jnz	.Lfrom_usermode_switch_stack_\@
