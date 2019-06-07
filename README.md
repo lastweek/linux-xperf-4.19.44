@@ -11,6 +11,14 @@ In this repo, we use x86 page fault exception as our wheel to get that.
 
 ## Mechanism
 
+### Files changed
+
+Diff the first commit to see all changes.
+
+- `arch/x86/entry/entry_64.S`
+- `arch/x86/mm/fault.c`: save u2k_k to user stack
+- `xperf/xperf.c`: userspace test code
+
 ### User to kernel (u2k)
 
 At a high-level, the flow is:
@@ -37,7 +45,8 @@ The approach:
   - `entry_64.S`: Restore rax/rdx
   - `fault.c`: use `copy_to_user` to save `u2k_k` in user stack.
 
-Enable/Disable: change `xperf_idtentry` back to `idtentry` for both `page_fault` and `async_page_fault`.
+Enable/Disable:
+  - `entry_64.S`: Change `xperf_idtentry` back to `idtentry` for both `page_fault` and `async_page_fault`.
 
 Note: u2k hack is safe because we don't probe user virtual address directly in assembly.
 Userspace accessing is done via `copy_from_user()`.
@@ -57,9 +66,10 @@ The approach:
   - save to user stack
   - restore scratch registers
 
-Enable/Disable: There is a `xperf_return_kernel_tsc` code block at `entry_64.S`.
+Enable/Disable:
+  - `entry_64.S:` There is a `xperf_return_kernel_tsc` code block.
 
-Note: k2u hack is NOT safe because we probe user virtual address directly in assembly,
+Note: k2u hack is __NOT SAFE__ because we probe user virtual address directly in assembly,
 i.e., `movq    %rax, (%rcx)` in our hack. During my experiments, sometimes it will crash,
 but not always.
 
@@ -125,12 +135,6 @@ The user stack layout upon pgfault is:
 ## Misc
 
 - For VM scenario, the page fault entry point is `async_page_fault`, not the `page_fault`.
-
-## Files changed
-
-- `arch/x86/entry/entry_64.S`: assembly TSC code
-- `arch/x86/mm/fault.c`: print
-- `xperf/xperf.c`: userspace test code
 
 ## HOWTO Run
 
