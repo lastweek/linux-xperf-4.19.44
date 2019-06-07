@@ -1,0 +1,555 @@
+diff --git a/arch/x86/entry/entry_64.S b/arch/x86/entry/entry_64.S
+index 617df50..93cadbb 100644
+--- a/arch/x86/entry/entry_64.S
++++ b/arch/x86/entry/entry_64.S
+@@ -658,6 +658,8 @@ GLOBAL(retint_user)
+ 	call	prepare_exit_to_usermode
+ 	TRACE_IRQS_IRETQ
+ 
++#define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
++
+ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
+ #ifdef CONFIG_DEBUG_ENTRY
+ 	/* Assert that pt_regs indicates user mode. */
+@@ -695,6 +697,52 @@ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
+ 	/* Restore RDI. */
+ 	popq	%rdi
+ 	SWAPGS
++
++# Begin xperf k2u
++xperf_return_kernel_tsc:
++	/*
++	 * User stack:
++	 *   | ..       |
++	 *   | 8B magic | (filled by user)   +24
++	 *   | 8B u2k_u | (filled by user)   +16
++	 *   | 8B u2k_k | (filled by kernel) +8
++	 *   | 8B k2u_k | (filled by kernel) <-- %rsp
++	 * 
++	 * Kernel Stack frame after saving:
++	 *	SS	+56
++	 *	RSP	+48
++	 *	EFLAGS	+40
++	 *	CS	+32
++	 *	RIP	+24
++	 *	RAX	+16
++	 *	RDX	+8
++	 *	RCX	<- %rsp
++	 */
++	pushq	%rax
++	pushq	%rdx
++	pushq	%rcx
++
++	# %rcx points to user RSP
++	movq	48(%rsp), %rcx
++
++	cmpq	$USER_KERNEL_CROSSING_PERF_MAGIC, 24(%rcx)
++	jne	1f
++
++	# k2u_k
++	mfence
++	rdtsc
++
++	shl	$32, %rdx
++	or	%rdx, %rax
++
++	# Save to k2u_k of user stack
++	movq	%rax, (%rcx)
++1:
++	popq	%rcx
++	popq	%rdx
++	popq	%rax
++# End xperf k2u
++
+ 	INTERRUPT_RETURN
+ 
+ 
+@@ -1162,11 +1210,6 @@ idtentry xenint3		do_int3			has_error_code=0
+ #endif
+ 
+ idtentry general_protection	do_general_protection	has_error_code=1
+-idtentry page_fault		do_page_fault		has_error_code=1
+-
+-#ifdef CONFIG_KVM_GUEST
+-idtentry async_page_fault	do_async_page_fault	has_error_code=1
+-#endif
+ 
+ #ifdef CONFIG_X86_MCE
+ idtentry machine_check		do_mce			has_error_code=0	paranoid=1
+@@ -1696,3 +1739,145 @@ ENTRY(rewind_stack_do_exit)
+ 
+ 	call	do_exit
+ END(rewind_stack_do_exit)
++
++/*
++ * xperf HACK:
++ * This is a copy of the original idtentry.
++ * The difference is we added some code to record TSC.
++ */
++.macro xperf_idtentry sym do_sym has_error_code:req paranoid=0 shift_ist=-1
++ENTRY(\sym)
++	UNWIND_HINT_IRET_REGS offset=\has_error_code*8
++
++	/* Sanity check */
++	.if \shift_ist != -1 && \paranoid == 0
++	.error "using shift_ist requires paranoid=1"
++	.endif
++
++	ASM_CLAC
++
++	.if \has_error_code == 0
++	pushq	$-1				/* ORIG_RAX: no syscall to restart */
++	.endif
++
++	/*
++	 * xperf HACK:
++	 * - Disable KPTI!
++	 * - Stack was switched from user to kernel
++	 * - Current kernel %rsp points to pt_regs->orig_ax
++	 * - Previous user %rsp was saved at pt_regs->sp, which is 32(%rsp)
++	 * - RDTSC save counter into EDX:EAX
++	 * - -8(%rsp) and -16(%rsp) are safe if we came from userspace,
++	 *   because the kernel stack start from beginning after switch,
++	 *   and kernel stack is usually 8K.
++	 * - Upon enter, %gs was not switched. To use per-cpu temporary,
++	 *   we need to do swapgs twice if we don't want to change other code.
++	 */
++
++	testb	$3, CS-ORIG_RAX(%rsp)
++	jz	1f
++
++	movq	%rax, -8(%rsp)
++	movq	%rdx, -16(%rsp)
++
++	# u2k_k
++	rdtsc
++	mfence
++
++	shl	$32, %rdx
++	or	%rdx, %rax
++
++	SWAPGS
++	movq	%rax, PER_CPU_VAR(xperf_kernel_tsc)
++	SWAPGS
++
++	# Restore rax/rdx
++	movq	-8(%rsp), %rax
++	movq	-16(%rsp), %rdx
++
++1:
++	.if \paranoid == 1
++	testb	$3, CS-ORIG_RAX(%rsp)		/* If coming from userspace, switch stacks */
++	jnz	.Lfrom_usermode_switch_stack_\@
++	.endif
++
++	.if \paranoid
++	call	paranoid_entry
++	.else
++	call	error_entry
++	.endif
++	UNWIND_HINT_REGS
++	/* returned flag: ebx=0: need swapgs on exit, ebx=1: don't need it */
++
++	.if \paranoid
++	.if \shift_ist != -1
++	TRACE_IRQS_OFF_DEBUG			/* reload IDT in case of recursion */
++	.else
++	TRACE_IRQS_OFF
++	.endif
++	.endif
++
++	movq	%rsp, %rdi			/* pt_regs pointer */
++
++	.if \has_error_code
++	movq	ORIG_RAX(%rsp), %rsi		/* get error code */
++	movq	$-1, ORIG_RAX(%rsp)		/* no syscall to restart */
++	.else
++	xorl	%esi, %esi			/* no error code */
++	.endif
++
++	.if \shift_ist != -1
++	subq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
++	.endif
++
++	call	\do_sym
++
++	.if \shift_ist != -1
++	addq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
++	.endif
++
++	/* these procedures expect "no swapgs" flag in ebx */
++	.if \paranoid
++	jmp	paranoid_exit
++	.else
++	jmp	error_exit
++	.endif
++
++	.if \paranoid == 1
++	/*
++	 * Entry from userspace.  Switch stacks and treat it
++	 * as a normal entry.  This means that paranoid handlers
++	 * run in real process context if user_mode(regs).
++	 */
++.Lfrom_usermode_switch_stack_\@:
++	call	error_entry
++
++	movq	%rsp, %rdi			/* pt_regs pointer */
++
++	.if \has_error_code
++	movq	ORIG_RAX(%rsp), %rsi		/* get error code */
++	movq	$-1, ORIG_RAX(%rsp)		/* no syscall to restart */
++	.else
++	xorl	%esi, %esi			/* no error code */
++	.endif
++
++	call	\do_sym
++
++	jmp	error_exit
++	.endif
++_ASM_NOKPROBE(\sym)
++END(\sym)
++.endm
++
++/*
++ * This is used on bare-metal host linux.
++ */
++xperf_idtentry	page_fault		do_page_fault		has_error_code=1
++
++/*
++ * This is used on a linux VM
++ * For example, a QEMU hosted VM.
++ */
++#ifdef CONFIG_KVM_GUEST
++xperf_idtentry	async_page_fault	do_async_page_fault	has_error_code=1
++#endif
+diff --git a/arch/x86/mm/fault.c b/arch/x86/mm/fault.c
+index 47bebfe..02a5f92 100644
+--- a/arch/x86/mm/fault.c
++++ b/arch/x86/mm/fault.c
+@@ -1202,6 +1202,56 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
+ 	return true;
+ }
+ 
++#define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
++
++/*
++ * Used to save the TSC right after user/kernel context switch.
++ * This is filled by assembly code.
++ */
++__visible DEFINE_PER_CPU(unsigned long, xperf_kernel_tsc);
++
++/*
++ * User stack:
++ *
++ *   | ..       |
++ *   | 8B magic | (filled by user)   +24
++ *   | 8B u2k_u | (filled by user)   +16
++ *   | 8B u2k_k | (filled by kernel) +8
++ *   | 8B k2u_k | (filled by kernel) <-- sp
++ */ 
++static noinline void
++xperf_profile(struct pt_regs *regs)
++{
++	unsigned long magic, u2k_k , user_sp;
++	void *u2k_k_p, *magic_p;
++
++	/*
++	 * We must measure xperf in a kernel without KPTI.
++	 * Because we are trying to access kernel virtual address
++	 * before the CR3 switch at entry_64.S
++	 */
++	BUILD_BUG_ON(IS_ENABLED(CONFIG_PAGE_TABLE_ISOLATION));
++
++	user_sp = regs->sp;
++
++	magic_p = (void *)(user_sp + 24);
++	u2k_k_p = (void *)(user_sp + 8);
++
++	/*
++	 * Though mostly the stack page should have been established already,
++	 * use copy_from_user() instead of raw dereference for safety.
++	 */
++	if (copy_from_user(&magic, magic_p, sizeof(unsigned long)))
++		return;
++
++	if (unlikely(magic == USER_KERNEL_CROSSING_PERF_MAGIC)) {
++		u2k_k = this_cpu_read(xperf_kernel_tsc);
++
++		if (copy_to_user(u2k_k_p, &u2k_k, sizeof(unsigned long)))
++			return;
++	}
++}
++
+ /*
+  * This routine handles page faults.  It determines the address,
+  * and the problem, and then passes it off to one of the appropriate
+@@ -1218,6 +1268,12 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
+ 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
+ 	u32 pkey;
+ 
++#if 1
++	/* Only track pgfault from userspace */
++	if (user_mode(regs))
++		xperf_profile(regs);
++#endif
++
+ 	tsk = current;
+ 	mm = tsk->mm;
+ 
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index ee545d1..c1ae5c4 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -3317,6 +3317,9 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
+ 
+ 	trace_mm_vmscan_memcg_reclaim_end(nr_reclaimed);
+ 
++	trace_printk("nr_pages: %lu, may_swap: %d, nr_to_reclaim: %lu, nr_reclaimed: %lu\n",
++		nr_pages, may_swap, sc.nr_to_reclaim, nr_reclaimed);
++
+ 	return nr_reclaimed;
+ }
+ #endif
+diff --git a/xperf/Makefile b/xperf/Makefile
+new file mode 100644
+index 0000000..ef1f6e6
+--- /dev/null
++++ b/xperf/Makefile
+@@ -0,0 +1,12 @@
++CFLAGS := -static
++
++SRCS := $(wildcard *.c posix/*.c)
++OBJS := $(SRCS:.c=.o)
++
++all: $(OBJS)
++
++clean:
++	rm -f *.o
++
++%.o: %.c
++	gcc -O1 -g -o $@ $< -lm -pthread
+diff --git a/xperf/README.md b/xperf/README.md
+new file mode 100644
+index 0000000..0dcd949
+--- /dev/null
++++ b/xperf/README.md
+@@ -0,0 +1,12 @@
++This is the assembly we expect:
++```
++  rdtsc  				# U2K user tsc
++
++  shl    $0x20,%rdx
++  or     %rdx,%rax
++  mov    %rax,(%r14)			# Save U2K user tsc to stack
++
++  movl   $0x12345678,(%r12)		# pgfault
++  
++  rdtsc  				# K2U user tsc
++```
+diff --git a/xperf/xperf.c b/xperf/xperf.c
+new file mode 100644
+index 0000000..7175f75
+--- /dev/null
++++ b/xperf/xperf.c
+@@ -0,0 +1,201 @@
++#define _GNU_SOURCE
++
++#include <sys/utsname.h>
++#include <math.h>
++#include <sys/time.h>
++#include <sys/mman.h>
++#include <sys/types.h>
++#include <sys/resource.h>
++#include <sys/types.h>
++#include <sys/syscall.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <signal.h>
++#include <string.h>
++#include <stdarg.h>
++#include <linux/unistd.h>
++#include <assert.h>
++#include <sched.h>
++
++#define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
++#define XPERF_RESERVED	0xdeadbeefbeefdead
++
++static inline void die(const char * str, ...)
++{
++	va_list args;
++	va_start(args, str);
++	vfprintf(stderr, str, args);
++	fputc('\n', stderr);
++	exit(1);
++}
++
++static int pin_cpu(int cpu_id)
++{
++	int ret;
++
++	cpu_set_t cpu_set;
++	CPU_ZERO(&cpu_set);
++	CPU_SET(cpu_id, &cpu_set);
++
++	ret = sched_setaffinity(0, sizeof(cpu_set), &cpu_set);
++	return ret;
++}
++
++static void getcpu(int *cpu, int *node)
++{
++	int ret;
++	ret = syscall(SYS_getcpu, cpu, node, NULL);
++}
++
++#define PAGE_SIZE 4096
++
++#define NR_PAGES 1000000ULL
++static unsigned long k2u_tsc[NR_PAGES];
++static unsigned long u2k_tsc[NR_PAGES];
++
++static __attribute__((always_inline)) inline unsigned long current_stack_pointer(void)
++{
++	unsigned long sp;
++	asm volatile (
++		"movq %%rsp, %0\n"
++		: "=r" (sp)
++	);
++	return sp;
++}
++
++/**
++ * rdtsc() - returns the current TSC without ordering constraints
++ *
++ * rdtsc() returns the result of RDTSC as a 64-bit integer.  The
++ * only ordering constraint it supplies is the ordering implied by
++ * "asm volatile": it will put the RDTSC in the place you expect.  The
++ * CPU can and will speculatively execute that RDTSC, though, so the
++ * results can be non-monotonic if compared on different CPUs.
++ */
++static __attribute__((always_inline)) inline unsigned long rdtsc(void)
++{
++	unsigned long low, high;
++	asm volatile("rdtsc" : "=a" (low), "=d" (high));
++	return ((low) | (high) << 32);
++}
++
++static int run(void)
++{
++	void *foo;
++	long nr_size, i;
++	unsigned long sp;
++	unsigned long k2u_total, k2u_avg;
++	unsigned long u2k_total, u2k_avg;
++	unsigned long *u2k_u, *u2k_k, *k2u_k, *magic;
++	unsigned long _u2k_u, _u2k_k, _k2u_k, _k2u_u;
++	unsigned long DONT_TOUCHME_cushion[32];
++
++	nr_size = NR_PAGES * PAGE_SIZE;
++	foo = mmap(NULL, nr_size, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
++	if (!foo)
++		die("fail to malloc");
++	printf("INFO: mmap range: [%#lx - %#lx]\n", foo, foo + NR_PAGES * PAGE_SIZE);
++
++	sp = current_stack_pointer();
++	printf("INFO: rsp=%#lx coushion=%p\n", sp, DONT_TOUCHME_cushion);
++
++	/*
++	 * User stack:
++	 *
++	 *   | ..       |
++	 *   | 8B magic | (filled by user)   +24
++	 *   | 8B u2k_u | (filled by user)   +16
++	 *   | 8B u2k_k | (filled by kernel) +8
++	 *   | 8B k2u_k | (filled by kernel) <-- sp
++	 */ 
++
++	magic = (unsigned long *)(sp + 24);
++	u2k_u = (unsigned long *)(sp + 16);
++	u2k_k = (unsigned long *)(sp + 8);
++	k2u_k = (unsigned long *)(sp);
++
++	*magic = USER_KERNEL_CROSSING_PERF_MAGIC;
++	*u2k_k = XPERF_RESERVED;
++	*k2u_k = XPERF_RESERVED;
++
++	for (i = 0; i < NR_PAGES; i++) {
++		int *bar, cut;
++
++		bar = foo + PAGE_SIZE * i;
++
++		/*
++		 * [U2K]
++		 *
++		 *          mfence
++		 *          rdtsc	<- u2k_u
++		 * (user)
++		 * -------  pgfault  --------
++		 * (kernel)
++		 *          rdtsc	<- u2k_k
++		 *          mfence
++		 ***
++		 * [K2U]
++		 *          mfence
++		 *          rdtsc	<- k2u_k
++		 * (kernel)
++		 * -------  IRET --------
++		 * (user)
++		 *          rdtsc	<- k2u_k
++		 *          mfence
++		 */
++
++		/*
++		 * Make sure rdtsc is not executed earlier,
++		 * also inform compiler not to reorder.
++		 */
++		asm volatile("mfence": : :"memory");
++		*u2k_u= rdtsc();
++		asm volatile("": : :"memory");
++
++		*bar = 0x12345678;
++
++		/*
++		 * The reserved spot is the TSC value right before IRET.
++		 * Though there are ~6 instructions before IRET, should be fine.
++		 * Please check retint_user at entry_64.S for details.
++		 */
++		asm volatile("": : :"memory");
++		_k2u_u = rdtsc();
++		asm volatile("mfence": : :"memory");
++
++		_u2k_u = *u2k_u;
++		_u2k_k = *u2k_k;
++		_k2u_k = *k2u_k;
++
++		u2k_tsc[i] = _u2k_k - _u2k_u;
++		k2u_tsc[i] = _k2u_u - _k2u_k;
++
++		if (0) {
++			printf("u2k %18d - k2u %18d\n",  u2k_tsc[i], k2u_tsc[i]);
++		}
++	}
++
++	for (i = 0, k2u_total = 0, u2k_total = 0; i < NR_PAGES; i++) {
++		u2k_total += u2k_tsc[i];
++		k2u_total += k2u_tsc[i];
++	}
++	u2k_avg = u2k_total/NR_PAGES;
++	k2u_avg = k2u_total/NR_PAGES;
++
++	printf("\nXPERF REPORT (Average of #%d run)\n"
++	       "  [User to Kernel (u2k)] %10d (cycles)\n"
++	       "  [Kernel to User (k2u)] %10d (cycles)\n",
++		NR_PAGES, u2k_avg, k2u_avg);
++	return 0;
++}
++
++int main(void)
++{
++	int i, cpu, node;
++
++	pin_cpu(23);
++	getcpu(&cpu, &node);
++	printf("cpu: %d, node: %d\n", cpu, node);
++
++	run();
++}

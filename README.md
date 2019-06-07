@@ -17,7 +17,7 @@ to do bookkeeping. Check below for details.
 
 ### Files changed
 
-Diff the first commit to see all changes.
+The whole patch is [`xperf_patch`](https://github.com/lastweek/linux-xperf-4.19.44/blob/master/xperf_patch).
 
 - `arch/x86/entry/entry_64.S`
 - `arch/x86/mm/fault.c`: save u2k_k to user stack
