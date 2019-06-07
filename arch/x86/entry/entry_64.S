@@ -700,7 +700,14 @@ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
 
 xperf_return_kernel_tsc:
 	/*
-	 * Stack frame after saving:
+	 * User stack:
+	 *
+	 *   | ..            |
+	 *   | 8B magic      | +16
+	 *   | 8B user tsc   | +8
+	 *   | 8B reserved   | <-- user rsp
+	 * 
+	 * Kernel Stack frame after saving:
 	 *	SS	+56
 	 *	RSP	+48
 	 *	EFLAGS	+40
@@ -720,11 +727,12 @@ xperf_return_kernel_tsc:
 	cmpq	$USER_KERNEL_CROSSING_PERF_MAGIC, 16(%rcx)
 	jne	1f
 
+	mfence
 	rdtsc
 	shl	$32, %rdx
 	or	%rdx, %rax
 
-	# Save it
+	# Save to user stack
 	movq	%rax, (%rcx)
 1:
 	popq	%rcx

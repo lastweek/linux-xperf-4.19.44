@@ -50,6 +50,8 @@ static void getcpu(int *cpu, int *node)
 
 #define NR_PAGES 1000ULL
 
+static unsigned long k2u_tsc[NR_PAGES];
+
 static __attribute__((always_inline)) inline unsigned long current_stack_pointer(void)
 {
 	unsigned long sp;
@@ -81,7 +83,7 @@ static int run(void)
 	void *foo;
 	long nr_size, i;
 	struct timeval ts, te, result;
-	unsigned long sp;
+	unsigned long sp, r_k, r_u, k2u_total, k2u_avg;
 	unsigned long cushion[10];
 
 	nr_size = NR_PAGES * PAGE_SIZE;
@@ -119,7 +121,27 @@ static int run(void)
 		asm volatile("": : :"memory");
 
 		*bar = 100;
+
+		/*
+		 * The reserved spot is the TSC value right before IRET.
+		 * Though there are ~6 instructions before IRET, should be fine.
+		 * Please check retint_user at entry_64.S for details.
+		 */
+		asm volatile("": : :"memory");
+		r_u = rdtsc();
+		r_k = *(unsigned long *)(sp);
+		k2u_tsc[i] = r_u - r_k;
+
+		printf("[xperf k2u] k_tsc:%lu u_tsc:%lu k2u_latency: %lu\n",
+			r_k, r_u, r_u - r_k);
 	}
+
+	for (i = 0, k2u_total = 0; i < NR_PAGES; i++)
+		k2u_total += k2u_tsc[i];
+	k2u_avg = k2u_total/NR_PAGES;
+	printf("Kernel -> User Crossing (Average of #%d run): %lu cycles.\n",
+		NR_PAGES, k2u_avg);
+
 	return 0;
 }
 

@@ -1204,8 +1204,6 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
 
 #define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
 
-static unsigned long nr_xperf;
-
 /*
  * Used to save the TSC right after user/kernel context switch.
  * This is filled by assembly code.
@@ -1249,9 +1247,8 @@ xperf_profile(struct pt_regs *regs)
 		 * Don't use trace_printk. Somehow enabling it
 		 * introduce a lot extra overheads.
 		 */
-		pr_crit("idx-%5ld rsp:%#lx u_tsc:%ld k_tsc:%ld cur:%lld Latency: %ld\n",
-			nr_xperf, user_sp, user_tsc, kernel_tsc, rdtsc(), kernel_tsc - user_tsc);
-		nr_xperf++;
+		pr_crit("[xperf u2k] u_tsc:%lu k_tsc:%lu u2k_latency: %lu\n",
+			user_tsc, kernel_tsc, kernel_tsc - user_tsc);
 	}
 }
 
