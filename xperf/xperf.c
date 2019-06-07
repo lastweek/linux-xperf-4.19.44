@@ -18,6 +18,7 @@
 #include <sched.h>
 
 #define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
+#define XPERF_RESERVED	0xdeadbeefbeefdead
 
 static inline void die(const char * str, ...)
 {
@@ -108,7 +109,7 @@ static int run(void)
 	*(unsigned long *)(sp + 16) = USER_KERNEL_CROSSING_PERF_MAGIC;
 
 	/* reserved slot  */
-	*(unsigned long *)(sp) = 666;
+	*(unsigned long *)(sp) = XPERF_RESERVED;
 
 	gettimeofday(&ts, NULL);
 	for (i = 0; i < NR_PAGES; i++) {
@@ -132,8 +133,15 @@ static int run(void)
 		r_k = *(unsigned long *)(sp);
 		k2u_tsc[i] = r_u - r_k;
 
-		printf("[xperf k2u] k_tsc:%lu u_tsc:%lu k2u_latency: %lu\n",
-			r_k, r_u, r_u - r_k);
+		if (r_k != XPERF_RESERVED) {
+			printf("[xperf k2u] k_tsc:%lu u_tsc:%lu k2u_latency: %lu\n",
+				r_k, r_u, r_u - r_k);
+		}
+	}
+
+	if (r_k == XPERF_RESERVED) {
+		printf("WARN: your kernel does not have xperf k2u profiling.\n");
+		return 0;
 	}
 
 	for (i = 0, k2u_total = 0; i < NR_PAGES; i++)
