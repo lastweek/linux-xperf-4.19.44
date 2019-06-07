@@ -658,6 +658,8 @@ GLOBAL(retint_user)
 	call	prepare_exit_to_usermode
 	TRACE_IRQS_IRETQ
 
+#define USER_KERNEL_CROSSING_PERF_MAGIC	0x19940619
+
 GLOBAL(swapgs_restore_regs_and_return_to_usermode)
 #ifdef CONFIG_DEBUG_ENTRY
 	/* Assert that pt_regs indicates user mode. */
@@ -695,6 +697,40 @@ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
 	/* Restore RDI. */
 	popq	%rdi
 	SWAPGS
+
+xperf_return_kernel_tsc:
+	/*
+	 * Stack frame after saving:
+	 *	SS	+56
+	 *	RSP	+48
+	 *	EFLAGS	+40
+	 *	CS	+32
+	 *	RIP	+24
+	 *	RAX	+16
+	 *	RDX	+8
+	 *	RCX	<- %rsp
+	 */
+	pushq	%rax
+	pushq	%rdx
+	pushq	%rcx
+
+	# %rcx points to user RSP
+	movq	48(%rsp), %rcx
+
+	cmpq	$USER_KERNEL_CROSSING_PERF_MAGIC, 16(%rcx)
+	jne	1f
+
+	rdtsc
+	shl	$32, %rdx
+	or	%rdx, %rax
+
+	# Save it
+	movq	%rax, (%rcx)
+1:
+	popq	%rcx
+	popq	%rdx
+	popq	%rax
+
 	INTERRUPT_RETURN
 
 
