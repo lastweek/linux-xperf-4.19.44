@@ -212,3 +212,5 @@ CPU: Xeon E5-v3, @2.4GHz
 |---| ---|---|
 | VM| ~600 | ~370 |
 |Bare-metal| ~440| ~270|
+
+(Q: the cpu doesn't run at 2.4GHz during testing. Will the number of cycles change if CPU frequency change? Or is it something fixed?)
