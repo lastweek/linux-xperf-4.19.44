@@ -13,6 +13,20 @@ But do note, the numbers reported by this repo slightly larger than the
 real crossing overhead because some instructions are needed in between
 to do bookkeeping. Check below for details.
 
+## Numbers
+
+Some preliminary numbers obtained about user/kernel space crossing:
+
+CPU: Xeon E5-v3, @2.4GHz
+
+|Platform| User to Kernel (Cycles)| Kernel to User (Cycles)|
+|---| ---|---|
+| VM| ~600 | ~370 |
+|Bare-metal| ~440| ~270|
+
+(Q: the cpu doesn't run at 2.4GHz during testing. Will the number of cycles change if CPU frequency change? Or is it something fixed?)
+
+
 ## Mechanism
 
 ### Files changed
@@ -203,14 +217,3 @@ Steps:
 - Disable hugepage
   - `echo never > /sys/kernel/mm/transparent_hugepage/enabled`
 - Run `xperf/xperf.c`, you will get a report.
-
-## Numbers
-
-CPU: Xeon E5-v3, @2.4GHz
-
-|Type| U2K Cycles| K2U Cycles|
-|---| ---|---|
-| VM| ~600 | ~370 |
-|Bare-metal| ~440| ~270|
-
-(Q: the cpu doesn't run at 2.4GHz during testing. Will the number of cycles change if CPU frequency change? Or is it something fixed?)
