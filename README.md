@@ -4,8 +4,8 @@ Author: Yizhou Shan <ys@purdue.edu>
 
 ## Purpose
 
-This repo is slighly hacked linux kernel that can be used to measure
-user and kernel space crossing latencies in CPU cycles. Crossing meant
+This repo is a slighly hacked linux kernel that can be used to measure
+user and kernel space crossing latency in CPU cycles. Crossing meant
 ring level change within CPU, e.g., SYSCALL, interrupt, or exceptions.
 
 This repo only measure the crossing overhead of page fault, which should
