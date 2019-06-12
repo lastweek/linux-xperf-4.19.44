@@ -4,10 +4,13 @@ Author: Yizhou Shan <ys@purdue.edu>
 
 ## Purpose
 
-We try to measure the user/kernel space crossing overhead.
-By crossing, we meant the pure crossing overhead excluding all general
-kernel assembly glue code.
-In this repo, we use x86 page fault exception as our wheel to get that.
+This repo is slighly hacked linux kernel that can be used to measure
+user and kernel space crossing latencies in CPU cycles. Crossing meant
+ring level change within CPU, e.g., SYSCALL, interrupt, or exceptions.
+
+This repo only measure the crossing overhead of page fault, which should
+be similar to all other exceptions within x86 IDT tables. Syscall crossing
+overhead is not measured, but can be measured in a similar fashion.
 
 But do note, the numbers reported by this repo slightly larger than the
 real crossing overhead because some instructions are needed in between
