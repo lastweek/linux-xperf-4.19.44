@@ -1,6 +1,6 @@
 # Crossing Performance (xperf)
 
-Author: Yizhou Shan <ys@purdue.edu>
+Author: Yizhou Shan <syzwhat@gmail.com>
 
 ## Purpose
 
@@ -12,13 +12,13 @@ This repo only measure the crossing overhead of page fault, which should
 be similar to all other exceptions within x86 IDT tables. Syscall crossing
 overhead is not measured, but can be measured in a similar fashion.
 
-But do note, the numbers reported by this repo slightly larger than the
+But do note, the numbers reported by this repo are slightly larger than the
 real crossing overhead because some instructions are needed in between
 to do bookkeeping. Check below for details.
 
 ## Numbers
 
-Some preliminary numbers obtained about user/kernel space crossing:
+Some preliminary numbers:
 
 CPU: Xeon E5-v3, @2.4GHz
 
@@ -26,8 +26,6 @@ CPU: Xeon E5-v3, @2.4GHz
 |---| ---|---|
 | VM| ~600 | ~370 |
 |Bare-metal| ~440| ~270|
-
-(Q: the cpu doesn't run at 2.4GHz during testing. Will the number of cycles change if CPU frequency change? Or is it something fixed?)
 
 
 ## Mechanism
